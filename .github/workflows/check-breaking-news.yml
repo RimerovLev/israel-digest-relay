@@ -1,0 +1,31 @@
+name: Check Breaking News
+
+on:
+  schedule:
+    # Запускать каждые 15 минут между 06:00 и 23:00 по израильскому времени
+    # (03:00-20:00 UTC летом, 04:00-21:00 зимой)
+    - cron: '*/15 3-20 * * *'
+
+jobs:
+  check-breaking:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install anthropic
+      
+      - name: Check for breaking news
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python breaking.py
