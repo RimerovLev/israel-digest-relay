@@ -11,10 +11,6 @@ jobs:
   digest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -28,4 +24,58 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 digest.py
+        run: |
+          python3 << 'PYEOF'
+          import sys, os
+          sys.path.insert(0, '')
+
+          exec(open('/dev/stdin').read()) if False else None
+
+          from openai import OpenAI
+          import urllib.request, urllib.parse, json
+          from datetime import datetime, timezone, timedelta
+
+          def get_israel_time():
+              utc_now = datetime.now(timezone.utc)
+              month = utc_now.month
+              offset = 3 if 3 < month < 11 or (month == 3 and utc_now.day >= 25) or (month == 10 and utc_now.day < 27) else 2
+              return utc_now + timedelta(hours=offset), offset
+
+          def determine_digest_type(hour):
+              if 4 <= hour < 10:
+                  return "УТРЕННИЙ", "☀️"
+              elif 10 <= hour < 16:
+                  return "ДНЕВНОЙ", "🌤"
+              else:
+                  return "ВЕЧЕРНИЙ", "🌙"
+
+          SYSTEM_PROMPT = """Ты — редактор новостного дайджеста для русскоязычной аудитории в Израиле. Канал выходит в Telegram три раза в день: утро (07:00), день (12:00), вечер (18:00). Ищи новости через web_search на сайтах: mignews.com, 9tv.co.il, newsru.co.il, timesofisrael.com, haaretz.com, jpost.com, reuters.com. Выбери 4-5 самых значимых новостей за последние 6 часов. УТРЕННИЙ — тон бодрый. ДНЕВНОЙ — тон деловой. ВЕЧЕРНИЙ — тон глубже, с позицией, вопрос читателям. Голос: друг который объясняет. Объём: 2000-2500 знаков. HTML: <b>жирный</b>, <i>курсив</i>. Никаких звёздочек."""
+
+          def generate_digest(digest_type, emoji, now_str, date_str):
+              client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+              msg = f"Сейчас {now_str} по израильскому времени, {date_str}. Сгенерируй {digest_type} дайджест {emoji}. Используй web_search. Верни только текст для Telegram (без заголовка TELEGRAM:)."
+              response = client.responses.create(model="gpt-4o", instructions=SYSTEM_PROMPT, tools=[{"type": "web_search_preview"}], input=msg)
+              for item in response.output:
+                  if item.type == "message":
+                      for content in item.content:
+                          if content.type == "output_text" and content.text.strip():
+                              return content.text.strip()
+              return None
+
+          def send_telegram(text, bot_token, chat_id):
+              url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+              data = urllib.parse.urlencode({'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML'}).encode()
+              req = urllib.request.Request(url, data=data, method='POST')
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  return json.loads(resp.read().decode()).get('ok', False)
+
+          now, _ = get_israel_time()
+          digest_type, emoji = determine_digest_type(now.hour)
+          print(f"Generating {emoji} {digest_type} digest for {now.strftime('%H:%M')} Israel time...")
+          text = generate_digest(digest_type, emoji, now.strftime('%H:%M'), now.strftime('%d.%m.%Y'))
+          if not text:
+              print("ERROR: no digest generated"); exit(1)
+          print(f"Generated {len(text)} chars")
+          ok = send_telegram(text, os.environ['TELEGRAM_BOT_TOKEN'], os.environ['TELEGRAM_CHAT_ID'])
+          print("✓ Sent!" if ok else "✗ Failed"); exit(0 if ok else 1)
+          PYEOF
