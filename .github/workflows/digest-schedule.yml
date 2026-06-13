@@ -2,10 +2,10 @@ name: Israel News Digest
 
 on:
   schedule:
-    - cron: '0 4 * * *'    # 07:00 Israel (UTC+3 summer)
-    - cron: '0 9 * * *'    # 12:00 Israel
-    - cron: '0 15 * * *'   # 18:00 Israel
-  workflow_dispatch:         # ручной запуск
+    - cron: '0 4 * * *'   # 07:00 Israel (UTC+3 summer)
+    - cron: '0 9 * * *'   # 12:00 Israel
+    - cron: '0 15 * * *'  # 18:00 Israel
+  workflow_dispatch:        # ручной запуск
 
 jobs:
   digest:
@@ -19,11 +19,11 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install anthropic
+        run: pip install openai
 
       - name: Generate and send digest
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python3 digest.py
