@@ -23,4 +23,81 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python3 breaking.py
+        run: |
+          python3 - << 'EOF'
+import os, json, urllib.request, urllib.parse, base64
+from openai import OpenAI
+from datetime import datetime, timezone, timedelta
+
+REPO = 'RimerovLev/israel-digest-relay'
+HISTORY_FILE = 'sent_breaking.json'
+
+def get_israel_time():
+    u = datetime.now(timezone.utc); m = u.month
+    o = 3 if (3<m<11 or (m==3 and u.day>=25) or (m==10 and u.day<27)) else 2
+    return u + timedelta(hours=o)
+
+def gh_api(path, method='GET', body=None):
+    url = f'https://api.github.com/repos/{REPO}/contents/{path}'
+    d = json.dumps(body).encode() if body else None
+    req = urllib.request.Request(url, data=d, method=method,
+        headers={'Authorization': f"token {os.environ['GH_TOKEN']}", 'Content-Type': 'application/json'})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r: return json.loads(r.read().decode())
+    except Exception as e: print(f'GH API: {e}'); return {}
+
+def load_history():
+    r = gh_api(HISTORY_FILE)
+    if 'content' not in r: return [], None
+    data = json.loads(base64.b64decode(r['content']).decode())
+    cut = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    return [h for h in data if h.get('time','') > cut], r['sha']
+
+def save_history(hist, sha, headline):
+    hist.append({'time': datetime.now(timezone.utc).isoformat(), 'headline': headline})
+    hist = hist[-50:]
+    content = base64.b64encode(json.dumps(hist, ensure_ascii=False).encode()).decode()
+    body = {'message': 'Update breaking history', 'content': content}
+    if sha: body['sha'] = sha
+    gh_api(HISTORY_FILE, method='PUT', body=body)
+
+SYSTEM = ("Emergency news editor for Russian-speaking Israel audience. "
+"Search web for breaking news. Return post text in Russian OR single word ТИХО. "
+"Publish ONLY: sirens in major cities, terror with casualties, airport/rail closure, "
+"emergency/war declaration, shekel +-5%/hour, global messenger outage 30min+. "
+"Need 2 sources or 1 official (IDF/police/Health Ministry). Event within 60 min. No repeats. "
+"Format if breaking: ⚠️ СРОЧНО | HH:MM\n<b>what where when</b>\nKnown:\n• fact1\n• fact2\nSource: name\nAction.")
+
+def check(now_str, date_str, hist):
+    c = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    recent = ', '.join(h['headline'] for h in hist) or 'nothing last 24h'
+    r = c.responses.create(model='gpt-4o-mini', instructions=SYSTEM,
+        tools=[{'type': 'web_search_preview'}],
+        input=f"Time: {now_str} Israel {date_str}. Already sent (skip): {recent}. Any breaking in last 60 min?")
+    for item in r.output:
+        if item.type == 'message':
+            for ct in item.content:
+                if ct.type == 'output_text' and ct.text.strip(): return ct.text.strip()
+    return 'ТИХО'
+
+def tg(text):
+    url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_BOT_TOKEN']}/sendMessage"
+    d = urllib.parse.urlencode({'chat_id': os.environ['TELEGRAM_CHAT_ID'], 'text': text, 'parse_mode': 'HTML'}).encode()
+    with urllib.request.urlopen(urllib.request.Request(url, data=d, method='POST'), timeout=30) as r:
+        return json.loads(r.read().decode()).get('ok', False)
+
+now = get_israel_time()
+if not (6 <= now.hour < 23):
+    print(f"Inactive hours {now.strftime('%H:%M')}. Skip."); exit(0)
+print(f"Breaking check at {now.strftime('%H:%M')} Israel time...")
+hist, sha = load_history()
+result = check(now.strftime('%H:%M'), now.strftime('%d.%m.%Y'), hist)
+if result.strip().upper() == 'ТИХО' or len(result.strip()) < 20:
+    print("Silent."); exit(0)
+print(f"BREAKING: {result[:150]}")
+if tg(result):
+    save_history(hist, sha, result.split('\n')[0][:100])
+    print("Sent!")
+else:
+    print("Send failed"); exit(1)
+EOF
