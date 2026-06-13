@@ -40,11 +40,43 @@ def determine_digest_type(hour):
     elif 10 <= hour < 16: return "ДНЕВНОЙ", "🌤"
     else: return "ВЕЧЕРНИЙ", "🌙"
 
-SYSTEM_PROMPT = """Ты — редактор новостного дайджеста для русскоязычной аудитории в Израиле. Канал выходит в Telegram три раза в день. Ищи новости через web_search на сайтах: mignews.com, 9tv.co.il, newsru.co.il, timesofisrael.com, haaretz.com, jpost.com, reuters.com. Выбери 4-5 самых значимых новостей за последние 6 часов. УТРЕННИЙ — тон бодрый. ДНЕВНОЙ — тон деловой. ВЕЧЕРНИЙ — тон глубже, с позицией, вопрос читателям. Голос: друг который объясняет. Объём: 2000-2500 знаков. HTML: <b>жирный</b>, <i>курсив</i>. Никаких звёздочек."""
+SYSTEM_PROMPT = """Ты — редактор новостного дайджеста для русскоязычной аудитории в Израиле.
+
+КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА — нарушение недопустимо:
+
+1. ТОЛЬКО СВЕЖИЕ НОВОСТИ. Текущая дата и время переданы в запросе. Включай ТОЛЬКО новости опубликованные за последние 6 часов от этого времени. Если не можешь подтвердить дату публикации — не включай. Старые новости (даже важные) — строго запрещены.
+
+2. ТОЛЬКО HTML ФОРМАТИРОВАНИЕ. Используй исключительно: <b>жирный</b> и <i>курсив</i>. Категорически запрещено: звёздочки (**текст**), решётки (#), тире списков (-), любой markdown. Если используешь markdown — это ошибка.
+
+3. БЕЗ ССЫЛОК. Никаких URL, гиперссылок, youtube-видео, источников со скобками. Ни одной ссылки в тексте.
+
+4. БЕЗ ЗАГОЛОВКОВ БЛОКОВ. Не пиши "📱 TELEGRAM:", "📘 FACEBOOK:" и подобное.
+
+ИСТОЧНИКИ — ищи через web_search:
+mignews.com, 9tv.co.il, newsru.co.il, timesofisrael.com, haaretz.com, jpost.com, reuters.com, bbc.com
+
+СТРУКТУРА:
+— Вводная фраза (1-2 предложения, задаёт тон)
+— 4-5 новостей в формате:
+🔹 <b>Заголовок</b>
+3-4 предложения. Факты + что это значит для читателя.
+— Закрывающий элемент (зависит от типа выпуска)
+
+☀️ УТРЕННИЙ — бодрый тон, без "доброе утро". Закрытие: короткая фраза с иронией или теплом.
+🌤 ДНЕВНОЙ — деловой тон. Закрытие: одна строка "за чем следить до вечера".
+🌙 ВЕЧЕРНИЙ — глубже, с позицией. К каждой новости добавь одну строку вывода/угла. Закрытие: вопрос читателям (живой, конкретный).
+
+ГОЛОС: друг который объясняет, не диктор. Позиция без агрессии. Ирония уместна. Никакой паники.
+ОБЪЁМ: 2000-2500 знаков."""
 
 def generate_digest(digest_type, emoji, now_str, date_str, client):
-    msg = f"Сейчас {now_str} по израильскому времени, {date_str}. Сгенерируй {digest_type} дайджест {emoji}. Используй web_search. Верни только текст для Telegram (без заголовка TELEGRAM:)."
-    r = client.responses.create(model="gpt-4o", instructions=SYSTEM_PROMPT, tools=[{"type":"web_search_preview"}], input=msg)
+    msg = (f"Сейчас {now_str} по израильскому времени, {date_str}. "
+           f"Сгенерируй {digest_type} дайджест {emoji}. "
+           f"Включай ТОЛЬКО новости опубликованные СЕГОДНЯ {date_str} за последние 6 часов. "
+           "Используй web_search для поиска. "
+           "Верни только готовый текст для Telegram. Никаких ссылок. Только HTML теги <b> и <i>.")
+    r = client.responses.create(model="gpt-4o", instructions=SYSTEM_PROMPT,
+        tools=[{"type":"web_search_preview"}], input=msg)
     for item in r.output:
         if item.type == "message":
             for c in item.content:
@@ -53,14 +85,11 @@ def generate_digest(digest_type, emoji, now_str, date_str, client):
     return None
 
 def get_image_for_digest(digest_text, client):
-    prompt = (
-        "Find the best image for this Israeli news digest. "
-        "Search the web for a relevant news photo with a direct image URL (.jpg/.jpeg/.png/.webp). "
-        "If you find one, return JSON: {"type":"url","value":"https://..."}. "
-        "If no direct image URL found, return JSON with a DALL-E 3 prompt: {"type":"dalle","value":"detailed english prompt"}. "
-        "Return ONLY the JSON, nothing else. "
-        f"Digest summary: {digest_text[:400]}"
-    )
+    prompt = (f"Find a relevant news photo for this Israeli news digest. "
+              f"Search the web for a direct image URL (.jpg/.jpeg/.png/.webp). "
+              f"Return ONLY JSON: {{"type":"url","value":"https://..."}} "
+              f"or {{"type":"dalle","value":"english dall-e prompt"}}. "
+              f"Digest: {digest_text[:400]}")
     r = client.responses.create(model="gpt-4o", tools=[{"type":"web_search_preview"}], input=prompt)
     for item in r.output:
         if item.type == "message":
@@ -77,21 +106,18 @@ def get_image_url(decision, client):
         url = decision['value']
         if re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.I):
             try:
-                req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
-                urllib.request.urlopen(req, timeout=8)
-                print(f"Using web image: {url[:80]}")
+                urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'}), timeout=8)
+                print(f"Web image: {url[:80]}")
                 return url
-            except Exception as e:
-                print(f"Web image failed ({e}), switching to DALL-E")
-    # Generate with DALL-E 3
+            except: print("Web image failed, using DALL-E")
     try:
         dalle_prompt = decision.get('value', 'Israel Middle East news')
-        print(f"Generating DALL-E image: {dalle_prompt[:80]}")
-        r = client.images.generate(model="dall-e-3", prompt=f"Photorealistic news photo: {dalle_prompt}.", size="1024x1024", quality="standard", n=1)
+        print(f"DALL-E: {dalle_prompt[:80]}")
+        r = client.images.generate(model="dall-e-3", prompt=f"Photorealistic news photo: {dalle_prompt}.",
+            size="1024x1024", quality="standard", n=1)
         return r.data[0].url
     except Exception as e:
-        print(f"DALL-E failed: {e}")
-        return None
+        print(f"DALL-E failed: {e}"); return None
 
 def send_telegram(text, bot_token, chat_id):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -102,19 +128,15 @@ def send_telegram(text, bot_token, chat_id):
 def send_telegram_photo(photo_url, bot_token, chat_id):
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     data = urllib.parse.urlencode({'chat_id':chat_id,'photo':photo_url}).encode()
-    req = urllib.request.Request(url, data=data, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            result = json.loads(r.read().decode())
-        print(f"Photo send: {result.get('ok')}")
-        return result.get('ok',False)
+        with urllib.request.urlopen(urllib.request.Request(url,data=data,method='POST'),timeout=30) as r:
+            return json.loads(r.read().decode()).get('ok',False)
     except Exception as e:
-        print(f"Photo send failed: {e}")
-        return False
+        print(f"Photo send failed: {e}"); return False
 
 now, _ = get_israel_time()
 digest_type, emoji = determine_digest_type(now.hour)
-print(f"Generating {emoji} {digest_type} digest for {now.strftime('%H:%M')} Israel time...")
+print(f"Generating {emoji} {digest_type} for {now.strftime('%H:%M')} Israel time...")
 
 client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 BOT = os.environ['TELEGRAM_BOT_TOKEN']
@@ -122,20 +144,16 @@ CHAT = os.environ['TELEGRAM_CHAT_ID']
 
 text = generate_digest(digest_type, emoji, now.strftime('%H:%M'), now.strftime('%d.%m.%Y'), client)
 if not text:
-    print("ERROR: no digest generated"); exit(1)
+    print("ERROR: no digest"); exit(1)
 print(f"Generated {len(text)} chars")
 
-ok = send_telegram(text, BOT, CHAT)
-if not ok:
+if not send_telegram(text, BOT, CHAT):
     print("Text send failed"); exit(1)
 print("Text sent!")
 
-print("Getting image...")
 decision = get_image_for_digest(text, client)
-print(f"Image decision: {decision.get('type')} — {str(decision.get('value',''))[:80]}")
+print(f"Image: {decision.get('type')} — {str(decision.get('value',''))[:60]}")
 img_url = get_image_url(decision, client)
 if img_url:
     send_telegram_photo(img_url, BOT, CHAT)
-else:
-    print("No image, skipping")
 EOF
