@@ -1,0 +1,32 @@
+name: Send Daily Digest
+
+on:
+  schedule:
+    # Утренний дайджест: 07:00 по израильскому времени (04:00 UTC в летнее время)
+    - cron: '0 4 * * *'
+    # Дневной дайджест: 12:00 по израильскому времени (09:00 UTC в летнее время)
+    - cron: '0 9 * * *'
+    # Вечерний дайджест: 18:00 по израильскому времени (15:00 UTC в летнее время)
+    - cron: '0 15 * * *'
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install anthropic
+      
+      - name: Generate and send digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python digest.py
