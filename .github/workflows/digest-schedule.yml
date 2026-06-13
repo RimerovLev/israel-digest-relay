@@ -32,49 +32,67 @@ from datetime import datetime, timezone, timedelta
 
 def get_israel_time():
     u = datetime.now(timezone.utc); m = u.month
-    o = 3 if (3<m<11 or (m==3 and u.day>=25) or (m==10 and u.day<27)) else 2
-    return u + timedelta(hours=o), o
+    o = 3 if (3 < m < 11 or (m == 3 and u.day >= 25) or (m == 10 and u.day < 27)) else 2
+    return u + timedelta(hours=o)
 
 def determine_digest_type(hour):
     if 4 <= hour < 10: return "УТРЕННИЙ", "☀️"
     elif 10 <= hour < 16: return "ДНЕВНОЙ", "🌤"
     else: return "ВЕЧЕРНИЙ", "🌙"
 
-SYSTEM_PROMPT = """Ты — редактор новостного дайджеста для русскоязычной аудитории в Израиле.
+SYSTEM_PROMPT = """Ты редактор новостного дайджеста для русскоязычной аудитории в Израиле.
+Telegram-канал, три выпуска в день: 07:00, 12:00, 18:00.
 
-КРИТИЧЕСКИ ВАЖНЫЕ ПРАВИЛА — нарушение недопустимо:
+ФОРМАТИРОВАНИЕ — КРИТИЧНО:
+Используй ТОЛЬКО HTML: <b>жирный</b>, <i>курсив</i>
+СТРОГО ЗАПРЕЩЕНО: звёздочки (**текст**), решётки (#), дефисы-списки (-), любой markdown.
+Нарушение формата = ошибка.
 
-1. ТОЛЬКО СВЕЖИЕ НОВОСТИ. Текущая дата и время переданы в запросе. Включай ТОЛЬКО новости опубликованные за последние 6 часов от этого времени. Если не можешь подтвердить дату публикации — не включай. Старые новости (даже важные) — строго запрещены.
+СВЕЖЕСТЬ — КРИТИЧНО:
+Включай ТОЛЬКО новости с датой публикации СЕГОДНЯ (дата в запросе), не старше 6 часов.
+Перед каждой новостью убедись: дата публикации = сегодня. Если не видна — не включай.
+Если за 6 часов меньше 3 значимых — расширь до 12 часов, напиши в начале: "Событий немного, но главное — вот".
 
-2. ТОЛЬКО HTML ФОРМАТИРОВАНИЕ. Используй исключительно: <b>жирный</b> и <i>курсив</i>. Категорически запрещено: звёздочки (**текст**), решётки (#), тире списков (-), любой markdown. Если используешь markdown — это ошибка.
+ИСТОЧНИКИ (только эти, ищи через web_search):
+Русские: mignews.com, 9tv.co.il, detaly.co.il, newsru.co.il, isra.com, vesty.co.il, cursorinfo.co.il
+Английские: timesofisrael.com, haaretz.com, jpost.com, ynetnews.com, i24news.tv
+Международные: reuters.com, bbc.com/news/world/middle-east, apnews.com
+Сделай 3-4 web_search запроса перед сборкой.
 
-3. БЕЗ ССЫЛОК. Никаких URL, гиперссылок, youtube-видео, источников со скобками. Ни одной ссылки в тексте.
-
-4. БЕЗ ЗАГОЛОВКОВ БЛОКОВ. Не пиши "📱 TELEGRAM:", "📘 FACEBOOK:" и подобное.
-
-ИСТОЧНИКИ — ищи через web_search:
-mignews.com, 9tv.co.il, newsru.co.il, timesofisrael.com, haaretz.com, jpost.com, reuters.com, bbc.com
+ОТБОР: 3 новости (редко 4) из разных блоков:
+Безопасность/армия | Политика/общество | Экономика/цены/жильё | Международный контекст | Жизнь в стране
+Исключить: светская хроника, спорт без резонанса, пустые заявления без действий.
 
 СТРУКТУРА:
-— Вводная фраза (1-2 предложения, задаёт тон)
-— 4-5 новостей в формате:
-🔹 <b>Заголовок</b>
-3-4 предложения. Факты + что это значит для читателя.
-— Закрывающий элемент (зависит от типа выпуска)
+[эмодзи] [ЧЧ:ММ], [день недели]
 
-☀️ УТРЕННИЙ — бодрый тон, без "доброе утро". Закрытие: короткая фраза с иронией или теплом.
-🌤 ДНЕВНОЙ — деловой тон. Закрытие: одна строка "за чем следить до вечера".
-🌙 ВЕЧЕРНИЙ — глубже, с позицией. К каждой новости добавь одну строку вывода/угла. Закрытие: вопрос читателям (живой, конкретный).
+<b>[Короткий заголовок]</b>
+2-3 предложения: факты + что это значит для читателя.
+(Вечер — обязательно одна строка вывода или неочевидного угла.)
 
-ГОЛОС: друг который объясняет, не диктор. Позиция без агрессии. Ирония уместна. Никакой паники.
-ОБЪЁМ: 2000-2500 знаков."""
+<b>[Заголовок]</b>
+...
+
+<b>[Заголовок]</b>
+...
+
+Закрытие:
+☀️ Утро → короткое пожелание / "Хорошего дня!"
+🌤 День → "За чем следить до вечера" (одна строка)
+🌙 Вечер → живой вопрос к читателям (конкретный, не "ставь лайк")
+
+@israel_daily
+
+ОБЪЁМ: 800-1000 знаков. Больше — резать. Абзацы короткие.
+ТОН: друг объясняет, не диктор. Позиция есть, без агрессии. Ирония — да, паника — нет.
+БЕЗ ССЫЛОК: никаких URL, YouTube, гиперссылок в тексте."""
 
 def generate_digest(digest_type, emoji, now_str, date_str, client):
-    msg = (f"Сейчас {now_str} по израильскому времени, {date_str}. "
-           f"Сгенерируй {digest_type} дайджест {emoji}. "
-           f"Включай ТОЛЬКО новости опубликованные СЕГОДНЯ {date_str} за последние 6 часов. "
-           "Используй web_search для поиска. "
-           "Верни только готовый текст для Telegram. Никаких ссылок. Только HTML теги <b> и <i>.")
+    msg = (f"Сейчас {now_str} по израильскому времени, {date_str}.\n"
+           f"Сгенерируй {digest_type} дайджест {emoji}.\n"
+           f"Включай ТОЛЬКО новости опубликованные сегодня {date_str}, не старше 6 часов.\n"
+           "Используй web_search (3-4 запроса).\n"
+           "Верни ТОЛЬКО готовый текст для Telegram. Без ссылок. Только HTML теги <b> и <i>.")
     r = client.responses.create(model="gpt-4o", instructions=SYSTEM_PROMPT,
         tools=[{"type":"web_search_preview"}], input=msg)
     for item in r.output:
@@ -86,9 +104,9 @@ def generate_digest(digest_type, emoji, now_str, date_str, client):
 
 def get_image_for_digest(digest_text, client):
     prompt = (f"Find a relevant news photo for this Israeli news digest. "
-              f"Search the web for a direct image URL (.jpg/.jpeg/.png/.webp). "
-              f"Return ONLY JSON: {{"type":"url","value":"https://..."}} "
-              f"or {{"type":"dalle","value":"english dall-e prompt"}}. "
+              f"Search the web for a direct image URL ending in .jpg, .jpeg, .png or .webp from a news site. "
+              f"Return ONLY valid JSON: {{"type":"url","value":"https://..."}} "
+              f"or if no good photo found: {{"type":"dalle","value":"english description of scene for dall-e"}}. "
               f"Digest: {digest_text[:400]}")
     r = client.responses.create(model="gpt-4o", tools=[{"type":"web_search_preview"}], input=prompt)
     for item in r.output:
@@ -99,55 +117,60 @@ def get_image_for_digest(digest_text, client):
                     if m:
                         try: return json.loads(m.group())
                         except: pass
-    return {"type":"dalle","value":"Israeli news Middle East photorealistic news photography"}
+    return {"type":"dalle","value":"Israeli news scene Middle East photorealistic"}
 
 def get_image_url(decision, client):
     if decision.get('type') == 'url':
         url = decision['value']
         if re.search(r'\.(jpg|jpeg|png|webp)(\?|$)', url, re.I):
             try:
-                urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'}), timeout=8)
-                print(f"Web image: {url[:80]}")
+                req = urllib.request.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+                urllib.request.urlopen(req, timeout=8)
+                print(f"Web image OK: {url[:80]}")
                 return url
-            except: print("Web image failed, using DALL-E")
+            except Exception as e:
+                print(f"Web image failed: {e}, using DALL-E")
     try:
-        dalle_prompt = decision.get('value', 'Israel Middle East news')
-        print(f"DALL-E: {dalle_prompt[:80]}")
-        r = client.images.generate(model="dall-e-3", prompt=f"Photorealistic news photo: {dalle_prompt}.",
+        p = decision.get('value', 'Israel Middle East news scene')
+        print(f"DALL-E: {p[:80]}")
+        r = client.images.generate(model="dall-e-3",
+            prompt=f"Photorealistic editorial news photo: {p}. No text, no watermarks.",
             size="1024x1024", quality="standard", n=1)
         return r.data[0].url
     except Exception as e:
         print(f"DALL-E failed: {e}"); return None
 
-def send_telegram(text, bot_token, chat_id):
+def send_text(text, bot_token, chat_id):
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = urllib.parse.urlencode({'chat_id':chat_id,'text':text,'parse_mode':'HTML'}).encode()
     with urllib.request.urlopen(urllib.request.Request(url,data=data,method='POST'),timeout=30) as r:
         return json.loads(r.read().decode()).get('ok',False)
 
-def send_telegram_photo(photo_url, bot_token, chat_id):
+def send_photo(photo_url, bot_token, chat_id):
     url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
     data = urllib.parse.urlencode({'chat_id':chat_id,'photo':photo_url}).encode()
     try:
         with urllib.request.urlopen(urllib.request.Request(url,data=data,method='POST'),timeout=30) as r:
             return json.loads(r.read().decode()).get('ok',False)
     except Exception as e:
-        print(f"Photo send failed: {e}"); return False
+        print(f"Photo failed: {e}"); return False
 
-now, _ = get_israel_time()
+now = get_israel_time()
 digest_type, emoji = determine_digest_type(now.hour)
-print(f"Generating {emoji} {digest_type} for {now.strftime('%H:%M')} Israel time...")
+now_str = now.strftime('%H:%M')
+date_str = now.strftime('%d.%m.%Y')
+print(f"Generating {emoji} {digest_type} at {now_str} Israel time ({date_str})")
 
 client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 BOT = os.environ['TELEGRAM_BOT_TOKEN']
 CHAT = os.environ['TELEGRAM_CHAT_ID']
 
-text = generate_digest(digest_type, emoji, now.strftime('%H:%M'), now.strftime('%d.%m.%Y'), client)
+text = generate_digest(digest_type, emoji, now_str, date_str, client)
 if not text:
-    print("ERROR: no digest"); exit(1)
-print(f"Generated {len(text)} chars")
+    print("ERROR: digest generation failed"); exit(1)
+print(f"Digest: {len(text)} chars")
 
-if not send_telegram(text, BOT, CHAT):
+if not send_text(text, BOT, CHAT):
     print("Text send failed"); exit(1)
 print("Text sent!")
 
@@ -155,5 +178,8 @@ decision = get_image_for_digest(text, client)
 print(f"Image: {decision.get('type')} — {str(decision.get('value',''))[:60]}")
 img_url = get_image_url(decision, client)
 if img_url:
-    send_telegram_photo(img_url, BOT, CHAT)
+    ok = send_photo(img_url, BOT, CHAT)
+    print("Image sent!" if ok else "Image send failed")
+else:
+    print("No image")
 EOF
